@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Neon Trench Run — Retro Arcade Browser Game</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="menu.html">Play</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="contact.html">Contact</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Neon Trench Run</h1>
+  <p class="muted">A retro arcade trench-run shooter built for the browser. Minimal shapes, big vibes.</p>
+
+  <div class="card">
+    <h2>How to play</h2>
+    <p>
+      Fly down the trench, dodge pillars, and take out interceptors. At the end of each round,
+      line up the targeting system and fire a missile into the reactor vent to advance to a harder round.
+      You have <strong>3 lives</strong>. Survive as long as you can.
+    </p>
+    <p>
+      Controls: <span class="code">WASD</span> or <span class="code">Arrow Keys</span> to move,
+      <span class="code">Space</span> to fire, <span class="code">M</span> to launch a missile.
+    </p>
+    <p><a href="menu.html">Go to the Main Menu →</a></p>
+  </div>
+
+  <div class="card">
+    <h2>About ads</h2>
+    <p>
+      Ads may appear on the <strong>main menu only</strong>. Gameplay pages do not include ads.
+    </p>
+  </div>
+
+  <footer>
+    <p><small>© <span id="y"></span> Neon Trench Run. All rights reserved.</small></p>
+  </footer>
+</main>
+
+<script>
+  document.getElementById('y').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
