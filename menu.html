@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Neon Trench Run — Main Menu</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .menu-wrap { display: grid; gap: 14px; }
+    .btn {
+      display: inline-block;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color: inherit;
+      text-decoration: none;
+      text-align: center;
+      font-weight: 600;
+    }
+    .btn:hover { background: rgba(255,255,255,0.10); }
+    .ad-box {
+      min-height: 120px;
+      border: 1px dashed rgba(255,255,255,0.25);
+      border-radius: 12px;
+      padding: 12px;
+      display: grid;
+      place-items: center;
+      color: rgba(230,240,255,0.75);
+    }
+    .two-col { display: grid; gap: 14px; grid-template-columns: 1fr; }
+    @media (min-width: 760px) { .two-col { grid-template-columns: 1.3fr 0.7fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="menu.html">Main Menu</a>
+    <a href="privacy.html">Privacy</a>
+    <a href="terms.html">Terms</a>
+    <a href="contact.html">Contact</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Neon Trench Run</h1>
+  <p class="muted">Retro trench-run arcade. Ads appear on this menu only.</p>
+
+  <div class="two-col">
+    <div class="card menu-wrap">
+      <a class="btn" href="play.html">▶ Play</a>
+      <a class="btn" href="howto.html">How To Play</a>
+      <a class="btn" href="leaderboard.html">Leaderboard</a>
+      <a class="btn" href="settings.html">Settings</a>
+    </div>
+
+    <div class="card">
+      <h2>Sponsored</h2>
+
+      <!-- ✅ ADS GO HERE (menu only) -->
+      <div class="ad-box">
+        <div>
+          <div><strong>Ad Slot Placeholder</strong></div>
+          <div class="muted">Paste AdSense code here after approval.</div>
+        </div>
+      </div>
+      <!-- ✅ END AD AREA -->
+
+      <p class="muted" style="margin-top:10px;">
+        Tip: keep the ad far from buttons to avoid accidental clicks.
+      </p>
+    </div>
+  </div>
+
+  <footer>
+    <p><small>© <span id="y"></span> Neon Trench Run.</small></p>
+  </footer>
+</main>
+
+<script>
+  document.getElementById('y').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
