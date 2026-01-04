@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Neon Trench Run — Play</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .game-shell { display: grid; gap: 14px; }
+    canvas {
+      width: 100%;
+      max-width: 960px;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      background: #05070a;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px;
+      display: block;
+    }
+    .row { display:flex; gap:10px; flex-wrap: wrap; }
+    .pill {
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <nav>
+    <a href="menu.html">← Back to Menu</a>
+  </nav>
+</header>
+
+<main class="game-shell">
+  <h1>Play</h1>
+
+  <div class="row">
+    <div class="pill">Move: WASD / Arrow Keys</div>
+    <div class="pill">Fire: Space</div>
+    <div class="pill">Missile: M</div>
+    <div class="pill">Pause: Esc</div>
+  </div>
+
+  <canvas id="game" width="960" height="540"></canvas>
+
+  <div class="card">
+    <p class="muted">
+      No ads on the gameplay page. If you see this canvas, hosting is working — next step is adding the game code.
+    </p>
+  </div>
+</main>
+
+<script src="game/main.js"></script>
+</body>
+</html>
