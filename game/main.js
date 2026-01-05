@@ -45,39 +45,51 @@
     };
   }
 
-  function circleHit(ax, ay, ar, bx, by, br) {
-    const dx = ax - bx;
-    const dy = ay - by;
-    const rr = ar + br;
-    return dx * dx + dy * dy <= rr * rr;
-  }
+  // ============================================================
+  // Tuning knobs (easy to adjust later)
+  // ============================================================
+  const TUNE = {
+    // Trench look/feel
+    slices: 36,              // more slices = smoother perspective
+    rungEvery: 3,            // floor “rungs” frequency
+    wallPanelEvery: 4,       // wall panel frequency
+    lightEvery: 7,           // occasional “light strip”
+    greebleChance: 0.55,     // chance a segment gets a greeble rectangle
+
+    // Difficulty / chaos
+    enemySpawnMin: 1.25,     // bigger = fewer enemies
+    enemySpawnMax: 2.20,
+    enemyShotsEnabled: true,
+    enemyShotRateScale: 0.35, // lower = fewer enemy shots (0.35 = calm)
+    pipesEnabled: true,
+    pipeChance: 0.40,        // chance to spawn a wall pipe when timer hits
+  };
 
   // ============================================================
-  // Projection / camera
-  // World space: x (left/right), z (forward distance ahead of player)
-  // Player is at z = shipZ. Objects are ahead with z > shipZ.
-  // We move forward by decreasing all objects' z (world scroll).
+  // Projection / camera (FIXED so near is bottom, far is horizon)
+  // World space: x (left/right), z (forward distance ahead of ship)
   // ============================================================
   const cam = {
     horizonY: 120,
     fov: 520,
     projectXZ(x, z) {
       const zz = Math.max(40, z);
-      const s = this.fov / (zz + this.fov); // 0..1
+      const s = this.fov / (zz + this.fov); // near -> bigger s, far -> smaller s
       const sx = W * 0.5 + x * s;
-      const sy = this.horizonY + (1 - s) * (H - this.horizonY);
+
+      // ✅ FIX: near points should be near the bottom (bigger s => bigger y)
+      const sy = this.horizonY + s * (H - this.horizonY);
+
       return { x: sx, y: sy, s };
     },
   };
 
   // ============================================================
-  // Trench model
-  // halfWidth shrinks as z increases (farther away -> narrower)
+  // Trench width model (narrower in the distance)
   // ============================================================
   function trenchHalfWidthAt(z, nearHalf, farHalf, farZ) {
-    // z ~ shipZ .. farZ
     const t = clamp((z - game.shipZ) / (farZ - game.shipZ), 0, 1);
-    return lerp(nearHalf, farHalf, t); // narrower farther away
+    return lerp(nearHalf, farHalf, t);
   }
 
   // ============================================================
@@ -90,32 +102,27 @@
       this.kind = kind; // "laser" | "missile"
       this.alive = true;
       this.age = 0;
-      this.speed = kind === "missile" ? 680 : 980;
-      this.radius = kind === "missile" ? 18 : 10; // world-ish collision against enemies
+      this.speed = kind === "missile" ? 700 : 980;
+      this.radius = kind === "missile" ? 22 : 12;
     }
     update(dt) {
       this.age += dt;
-      // move forward relative to the world
       this.z += this.speed * dt;
-      // world scroll moves everything toward player
       this.z -= game.scrollSpeed * dt;
-
       if (this.z > game.renderFarZ + 300) this.alive = false;
     }
     draw() {
-      const p = cam.projectXZ(this.x, this.z);
+      const p = cam.projectXZ(this.x - game.ship.x, this.z);
       ctx.save();
       ctx.strokeStyle = "#e6f0ff";
       ctx.lineWidth = Math.max(1, 2.4 * p.s);
 
       if (this.kind === "laser") {
-        // tiny tracer
         ctx.beginPath();
         ctx.moveTo(p.x, p.y + 10 * p.s);
         ctx.lineTo(p.x, p.y - 14 * p.s);
         ctx.stroke();
       } else {
-        // missile = capsule + glow dot
         ctx.beginPath();
         ctx.arc(p.x, p.y, Math.max(2.2, 5.2 * p.s), 0, Math.PI * 2);
         ctx.stroke();
@@ -125,7 +132,7 @@
         ctx.stroke();
       }
 
-      // first 0.12s: draw cockpit muzzle tracer line so it feels like wing guns
+      // muzzle tracer for “wing guns” feel
       if (this.age < 0.12 && this.kind === "laser") {
         const muzz = getWingMuzzlesScreen();
         const m = this.x < game.ship.x ? muzz.left : muzz.right;
@@ -159,14 +166,12 @@
       this.speed = 720;
     }
     update(dt) {
-      // moves toward player (decrease z faster than world)
       this.z -= this.speed * dt;
       this.z -= game.scrollSpeed * dt;
-
-      if (this.z < game.shipZ - 200) this.alive = false;
+      if (this.z < game.shipZ - 240) this.alive = false;
     }
     draw() {
-      const p = cam.projectXZ(this.x, this.z);
+      const p = cam.projectXZ(this.x - game.ship.x, this.z);
       ctx.save();
       ctx.strokeStyle = "#e6f0ff";
       ctx.lineWidth = Math.max(1, 2.1 * p.s);
@@ -183,32 +188,33 @@
       this.x = x;
       this.z = z;
       this.vx = (rng() * 2 - 1) * 0.45;
-      this.hp = 2; // missiles/lasers matter
-      this.fireCd = 0.6 + rng() * 0.9;
+      this.hp = 2;
+      this.fireCd = 0.9 + rng() * 1.2;
       this.alive = true;
-      this.r = 26; // collision-ish
     }
     update(dt) {
-      // slight steering toward player lane (arcade feel)
-      const steer = clamp((game.ship.x - this.x) * 0.15, -0.35, 0.35);
-      this.vx = clamp(this.vx + steer * dt, -1.1, 1.1);
+      // gentle drift and light steering toward player
+      const steer = clamp((game.ship.x - this.x) * 0.12, -0.25, 0.25);
+      this.vx = clamp(this.vx + steer * dt, -0.9, 0.9);
       this.x += this.vx * dt * 60;
 
-      // world scroll
       this.z -= game.scrollSpeed * dt;
 
-      // fire if close enough
-      this.fireCd -= dt;
-      if (this.fireCd <= 0 && this.z < game.shipZ + 950 && this.z > game.shipZ + 180) {
-        this.fireCd = clamp(0.95 - game.round * 0.05, 0.25, 0.95);
-        game.enemyShots.push(new EnemyShot(this.x, this.z));
+      // calmer enemy fire
+      if (TUNE.enemyShotsEnabled) {
+        this.fireCd -= dt;
+        const fireScale = clamp(1.0 - game.round * 0.05, 0.55, 1.0) / Math.max(0.15, TUNE.enemyShotRateScale);
+        // fireScale > 1 means slower effective firing (since we multiply cooldown)
+        if (this.fireCd <= 0 && this.z < game.shipZ + 980 && this.z > game.shipZ + 240) {
+          this.fireCd = (1.35 + Math.random() * 1.0) * fireScale;
+          if (Math.random() < 0.45) game.enemyShots.push(new EnemyShot(this.x, this.z));
+        }
       }
 
-      // despawn if passed player
-      if (this.z < game.shipZ - 80) this.alive = false;
+      if (this.z < game.shipZ - 120) this.alive = false;
     }
     draw() {
-      const p = cam.projectXZ(this.x, this.z);
+      const p = cam.projectXZ(this.x - game.ship.x, this.z);
       const s = p.s;
       const size = 18 + 42 * s;
 
@@ -217,34 +223,31 @@
       ctx.strokeStyle = "#e6f0ff";
       ctx.lineWidth = Math.max(1, 2.2 * s);
 
-      // Original silhouette: wedge + fins (not TIE-like)
-      // nose
+      // original “interceptor” silhouette (not TIE-like)
       ctx.beginPath();
-      ctx.moveTo(0, -size * 0.7);
-      ctx.lineTo(-size * 0.25, size * 0.15);
-      ctx.lineTo(size * 0.25, size * 0.15);
+      ctx.moveTo(0, -size * 0.72);
+      ctx.lineTo(-size * 0.26, size * 0.12);
+      ctx.lineTo(size * 0.26, size * 0.12);
       ctx.closePath();
       ctx.stroke();
 
-      // fuselage
       ctx.beginPath();
-      ctx.moveTo(-size * 0.12, size * 0.15);
-      ctx.lineTo(-size * 0.18, size * 0.55);
-      ctx.lineTo(size * 0.18, size * 0.55);
-      ctx.lineTo(size * 0.12, size * 0.15);
-      ctx.stroke();
-
-      // fins
-      ctx.beginPath();
-      ctx.moveTo(-size * 0.25, size * 0.23);
-      ctx.lineTo(-size * 0.85, size * 0.35);
-      ctx.lineTo(-size * 0.25, size * 0.47);
+      ctx.moveTo(-size * 0.12, size * 0.12);
+      ctx.lineTo(-size * 0.18, size * 0.58);
+      ctx.lineTo(size * 0.18, size * 0.58);
+      ctx.lineTo(size * 0.12, size * 0.12);
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.moveTo(size * 0.25, size * 0.23);
-      ctx.lineTo(size * 0.85, size * 0.35);
-      ctx.lineTo(size * 0.25, size * 0.47);
+      ctx.moveTo(-size * 0.26, size * 0.22);
+      ctx.lineTo(-size * 0.85, size * 0.36);
+      ctx.lineTo(-size * 0.26, size * 0.50);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(size * 0.26, size * 0.22);
+      ctx.lineTo(size * 0.85, size * 0.36);
+      ctx.lineTo(size * 0.26, size * 0.50);
       ctx.stroke();
 
       ctx.restore();
@@ -257,28 +260,27 @@
 
   class TrenchPipe {
     constructor(side, z, protrude, thickness) {
-      this.side = side; // -1 left wall, +1 right wall
+      this.side = side; // -1 left, +1 right
       this.z = z;
       this.protrude = protrude;
       this.thickness = thickness;
       this.alive = true;
-      this.r = 18 + thickness; // collision buffer
     }
     update(dt) {
       this.z -= game.scrollSpeed * dt;
-      if (this.z < game.shipZ - 200) this.alive = false;
+      if (this.z < game.shipZ - 260) this.alive = false;
     }
     draw() {
       const half = trenchHalfWidthAt(this.z, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
       const wallX = this.side * half;
       const innerX = wallX - this.side * this.protrude;
 
-      const a = cam.projectXZ(wallX, this.z);
-      const b = cam.projectXZ(innerX, this.z);
+      const a = cam.projectXZ(wallX - game.ship.x, this.z);
+      const b = cam.projectXZ(innerX - game.ship.x, this.z);
 
       ctx.save();
       ctx.strokeStyle = "#e6f0ff";
-      ctx.lineWidth = Math.max(1, this.thickness * a.s * 0.7);
+      ctx.lineWidth = Math.max(1, this.thickness * a.s * 0.65);
 
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
@@ -292,8 +294,7 @@
       ctx.restore();
     }
     collidesWithShip() {
-      // only when pipe is near player depth
-      if (Math.abs(this.z - game.shipZ) > 70) return false;
+      if (Math.abs(this.z - game.shipZ) > 80) return false;
       const half = trenchHalfWidthAt(this.z, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
       const wallX = this.side * half;
       const innerX = wallX - this.side * this.protrude;
@@ -305,13 +306,12 @@
   }
 
   // ============================================================
-  // Cockpit UI (muzzles / HUD / reticle)
+  // Cockpit UI (better looking cockpit, not weird geometry)
   // ============================================================
   function getWingMuzzlesScreen() {
-    // screen positions for muzzle flashes (fixed cockpit geometry)
     return {
-      left: { x: W * 0.33, y: H - 82 },
-      right: { x: W * 0.67, y: H - 82 },
+      left: { x: W * 0.28, y: H - 84 },
+      right: { x: W * 0.72, y: H - 84 },
     };
   }
   function getCenterMuzzleScreen() {
@@ -320,34 +320,57 @@
 
   function drawCockpit() {
     ctx.save();
-    ctx.strokeStyle = "rgba(230,240,255,0.85)";
+    ctx.strokeStyle = "rgba(230,240,255,0.90)";
     ctx.lineWidth = 2;
 
-    // bottom cockpit frame
+    // window frame (top arch + sides)
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.18, H - 150);
+    ctx.lineTo(W * 0.18, H - 18);
+    ctx.lineTo(W * 0.82, H - 18);
+    ctx.lineTo(W * 0.82, H - 150);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // angled supports
+    ctx.beginPath();
+    ctx.moveTo(W * 0.22, H - 18);
+    ctx.lineTo(W * 0.34, H - 160);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(W * 0.78, H - 18);
+    ctx.lineTo(W * 0.66, H - 160);
+    ctx.stroke();
+
+    // dashboard base
+    ctx.globalAlpha = 0.85;
     ctx.beginPath();
     ctx.moveTo(40, H - 12);
     ctx.lineTo(W - 40, H - 12);
     ctx.stroke();
+    ctx.globalAlpha = 1;
 
-    // angled window supports
-    ctx.beginPath();
-    ctx.moveTo(60, H - 12);
-    ctx.lineTo(W * 0.22, H - 120);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.moveTo(W - 60, H - 12);
-    ctx.lineTo(W * 0.78, H - 120);
-    ctx.stroke();
-
-    // wing tips / gun pods
+    // gun pods
     const muzz = getWingMuzzlesScreen();
     drawGunPod(muzz.left.x, muzz.left.y);
     drawGunPod(muzz.right.x, muzz.right.y);
 
     // center console
-    ctx.globalAlpha = 0.7;
-    ctx.strokeRect(W * 0.5 - 70, H - 120, 140, 90);
+    ctx.globalAlpha = 0.55;
+    ctx.strokeRect(W * 0.5 - 86, H - 132, 172, 104);
+    ctx.globalAlpha = 1;
+
+    // tiny “instrument” ticks
+    ctx.globalAlpha = 0.45;
+    for (let i = 0; i < 9; i++) {
+      const x = W * 0.5 - 70 + i * 17;
+      ctx.beginPath();
+      ctx.moveTo(x, H - 40);
+      ctx.lineTo(x, H - 52 - (i % 2) * 6);
+      ctx.stroke();
+    }
     ctx.globalAlpha = 1;
 
     ctx.restore();
@@ -358,18 +381,19 @@
     ctx.translate(x, y);
     ctx.strokeStyle = "rgba(230,240,255,0.95)";
     ctx.lineWidth = 2;
+
     ctx.beginPath();
-    ctx.moveTo(-30, 0);
-    ctx.lineTo(-10, -18);
-    ctx.lineTo(28, -18);
-    ctx.lineTo(38, 0);
+    ctx.moveTo(-34, 0);
+    ctx.lineTo(-14, -20);
+    ctx.lineTo(32, -20);
+    ctx.lineTo(44, 0);
     ctx.closePath();
     ctx.stroke();
 
     // barrel
     ctx.beginPath();
-    ctx.moveTo(10, -18);
-    ctx.lineTo(10, -32);
+    ctx.moveTo(16, -20);
+    ctx.lineTo(16, -38);
     ctx.stroke();
 
     ctx.restore();
@@ -381,9 +405,8 @@
     ctx.lineWidth = 2;
 
     const cx = W * 0.5;
-    const cy = H * 0.46;
+    const cy = H * 0.44;
 
-    // minimal crosshair
     ctx.beginPath();
     ctx.moveTo(cx - 18, cy);
     ctx.lineTo(cx + 18, cy);
@@ -394,7 +417,6 @@
     ctx.lineTo(cx, cy + 18);
     ctx.stroke();
 
-    // small outer box
     ctx.globalAlpha = 0.65;
     ctx.strokeRect(cx - 34, cy - 34, 68, 68);
     ctx.globalAlpha = 1;
@@ -406,9 +428,7 @@
     ctx.save();
     ctx.fillStyle = "#e6f0ff";
     ctx.strokeStyle = "#e6f0ff";
-    ctx.lineWidth = 1;
 
-    // top left
     ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
     ctx.fillText(`SCORE ${game.score}`, 22, 34);
     ctx.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
@@ -416,7 +436,6 @@
     ctx.fillText(`ROUND ${game.round}`, 22, 56);
     ctx.globalAlpha = 1;
 
-    // top right
     ctx.font = "16px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
     ctx.fillText(`LIVES ${game.lives}`, W - 130, 34);
     ctx.font = "14px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
@@ -424,13 +443,12 @@
     ctx.fillText(`MISSILES ${game.missiles}`, W - 170, 56);
     ctx.globalAlpha = 1;
 
-    // center top
     ctx.globalAlpha = 0.85;
     ctx.fillText(`SPEED ${Math.floor(game.scrollSpeed)}`, W * 0.5 - 56, 34);
     ctx.fillText(`COMBO x${game.combo}`, W * 0.5 - 56, 56);
     ctx.globalAlpha = 1;
 
-    // lock indicator placeholder
+    // lock placeholder
     ctx.globalAlpha = 0.65;
     ctx.strokeRect(W * 0.5 - 34, 70, 68, 22);
     ctx.globalAlpha = 1;
@@ -479,30 +497,25 @@
     lives: 3,
     missiles: 3,
 
-    // trench
-    trenchNearHalf: 280,
-    trenchFarHalf: 90,
+    trenchNearHalf: 290,
+    trenchFarHalf: 95,
 
-    shipZ: 120,
-    renderFarZ: 2400,
+    shipZ: 140,
+    renderFarZ: 2600,
 
     ship: { x: 0 },
     shipHitR: 36,
 
-    // motion
     scrollSpeed: 560,
 
-    // entities
     enemies: [],
     pipes: [],
     playerShots: [],
     enemyShots: [],
 
-    // spawning
     enemyTimer: 0,
     pipeTimer: 0,
 
-    // weapons
     fireCd: 0,
     missileCd: 0,
 
@@ -517,9 +530,10 @@
       this.combo = 0;
       this.lives = 3;
       this.missiles = 3;
+
       this.scrollSpeed = 560;
-      this.trenchNearHalf = 280;
-      this.trenchFarHalf = 90;
+      this.trenchNearHalf = 290;
+      this.trenchFarHalf = 95;
 
       this.resetRound();
       this.state = "playing";
@@ -527,7 +541,6 @@
 
     resetRound() {
       this.ship.x = 0;
-
       this.rng = makeRng(9000 + this.round * 101);
 
       this.enemies = [];
@@ -535,16 +548,15 @@
       this.playerShots = [];
       this.enemyShots = [];
 
-      this.enemyTimer = 0.3;
-      this.pipeTimer = 1.6;
+      this.enemyTimer = 0.6;
+      this.pipeTimer = 1.4;
 
       this.fireCd = 0;
       this.missileCd = 0;
 
-      // seed a couple enemies
-      for (let i = 0; i < 2 + Math.min(4, this.round); i++) {
-        this.spawnEnemy(true);
-      }
+      // seed a couple enemies, not too many
+      const seedCount = 1 + Math.min(2, Math.floor(this.round / 2));
+      for (let i = 0; i < seedCount; i++) this.spawnEnemy(true);
     },
 
     loseLife() {
@@ -556,37 +568,35 @@
 
     nextRound() {
       this.round += 1;
-      this.scrollSpeed = Math.min(980, this.scrollSpeed + 55);
-      this.trenchNearHalf = Math.max(220, this.trenchNearHalf - 7);
+      this.scrollSpeed = Math.min(900, this.scrollSpeed + 45);
+      this.trenchNearHalf = Math.max(230, this.trenchNearHalf - 6);
       this.missiles = Math.min(6, this.missiles + 1);
       this.resetRound();
     },
 
     spawnEnemy(prefill = false) {
       const half = this.trenchNearHalf;
-      const margin = 70;
+      const margin = 80;
       const x = (this.rng() * 2 - 1) * (half - margin);
-      const z = prefill ? this.shipZ + 650 + this.rng() * 900 : this.shipZ + 1200 + this.rng() * 900;
+      const z = prefill ? this.shipZ + 900 + this.rng() * 900 : this.shipZ + 1600 + this.rng() * 900;
       this.enemies.push(new EnemyInterceptor(x, z, this.rng));
     },
 
     spawnPipe() {
-      // rare trench-attached obstacle
+      if (!TUNE.pipesEnabled) return;
       const side = this.rng() < 0.5 ? -1 : 1;
-      const z = this.shipZ + 1400 + this.rng() * 900;
-      const protrude = 70 + this.rng() * 90;     // how far it sticks inward
+      const z = this.shipZ + 1500 + this.rng() * 900;
+      const protrude = 60 + this.rng() * 110;
       const thickness = 10 + this.rng() * 14;
       this.pipes.push(new TrenchPipe(side, z, protrude, thickness));
     },
 
     fireLaser() {
       if (this.fireCd > 0) return;
-      this.fireCd = 0.09; // rapid arcade fire
+      this.fireCd = 0.10;
 
-      const gunOffset = 72;
-      const z0 = this.shipZ + 60;
-
-      // two wing shots
+      const gunOffset = 78;
+      const z0 = this.shipZ + 70;
       this.playerShots.push(new PlayerShot(this.ship.x - gunOffset, z0, "laser"));
       this.playerShots.push(new PlayerShot(this.ship.x + gunOffset, z0, "laser"));
     },
@@ -596,9 +606,9 @@
       if (this.missiles <= 0) return;
 
       this.missiles -= 1;
-      this.missileCd = 0.6;
+      this.missileCd = 0.75;
 
-      const z0 = this.shipZ + 70;
+      const z0 = this.shipZ + 80;
       this.playerShots.push(new PlayerShot(this.ship.x, z0, "missile"));
     },
   };
@@ -609,45 +619,45 @@
   function update(dt) {
     if (game.state !== "playing") return;
 
-    // cooldowns
     game.fireCd = Math.max(0, game.fireCd - dt);
     game.missileCd = Math.max(0, game.missileCd - dt);
 
-    // movement (world x only; cockpit view handles visuals)
+    // movement (left/right in trench)
     const left = down("a") || down("arrowleft");
     const right = down("d") || down("arrowright");
-
-    // allow small vertical aim feel by nudging horizon (optional) later.
     const vx = (right ? 1 : 0) - (left ? 1 : 0);
-    const moveSpeed = 7.2; // world units per frame-ish
-    game.ship.x += vx * moveSpeed * dt * 60;
+
+    game.ship.x += vx * 7.2 * dt * 60;
 
     // constrain to trench at ship depth
     const half = trenchHalfWidthAt(game.shipZ, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
-    game.ship.x = clamp(game.ship.x, -half + 60, half - 60);
+    game.ship.x = clamp(game.ship.x, -half + 70, half - 70);
 
     // firing
     if (down(" ")) game.fireLaser();
     if (down("m")) {
-      // single-fire missile
       keys.delete("m");
       game.fireMissile();
     }
 
-    // spawn enemies (main threat)
-    const enemyEvery = clamp(0.95 - game.round * 0.06, 0.32, 0.95);
+    // enemy spawning (calmer)
+    const enemyEvery = clamp(
+      (TUNE.enemySpawnMin + (TUNE.enemySpawnMax - TUNE.enemySpawnMin) * game.rng()) - game.round * 0.03,
+      0.65,
+      2.6
+    );
     game.enemyTimer -= dt;
     if (game.enemyTimer <= 0) {
       game.enemyTimer += enemyEvery;
       game.spawnEnemy(false);
     }
 
-    // spawn occasional trench pipes
-    const pipeEvery = clamp(2.3 - game.round * 0.08, 0.95, 2.3);
+    // occasional pipes
     game.pipeTimer -= dt;
+    const pipeEvery = clamp(2.4 - game.round * 0.06, 1.2, 2.4);
     if (game.pipeTimer <= 0) {
       game.pipeTimer += pipeEvery;
-      if (game.rng() < 0.55) game.spawnPipe(); // not every time
+      if (Math.random() < TUNE.pipeChance) game.spawnPipe();
     }
 
     // update entities
@@ -661,7 +671,7 @@
     game.playerShots = game.playerShots.filter((s) => s.alive);
     game.enemyShots = game.enemyShots.filter((s) => s.alive);
 
-    // collisions: pipes vs ship (rare)
+    // collisions: pipes vs ship
     for (const p of game.pipes) {
       if (p.collidesWithShip()) {
         game.loseLife();
@@ -679,10 +689,10 @@
       }
     }
 
-    // collisions: enemies vs ship (ram)
+    // collisions: enemies ramming
     for (const e of game.enemies) {
-      if (Math.abs(e.z - game.shipZ) < 70) {
-        if (Math.abs(e.x - game.ship.x) < game.shipHitR + 18) {
+      if (Math.abs(e.z - game.shipZ) < 80) {
+        if (Math.abs(e.x - game.ship.x) < game.shipHitR + 20) {
           game.loseLife();
           return;
         }
@@ -692,13 +702,12 @@
     // player shots vs enemies
     for (const ps of game.playerShots) {
       for (const e of game.enemies) {
-        // use world x + z proximity as collision check
-        if (Math.abs(ps.z - e.z) < ps.radius + 38) {
-          if (Math.abs(ps.x - e.x) < ps.radius + 34) {
+        if (!ps.alive || !e.alive) continue;
+        if (Math.abs(ps.z - e.z) < ps.radius + 42) {
+          if (Math.abs(ps.x - e.x) < ps.radius + 40) {
             ps.alive = false;
             e.hit(ps.kind === "missile" ? 2 : 1);
 
-            // scoring + combo
             game.combo = Math.min(25, game.combo + 1);
             const base = ps.kind === "missile" ? 160 : 90;
             game.score += Math.floor(base * (1 + game.combo * 0.08));
@@ -707,10 +716,10 @@
       }
     }
 
-    // passive score for survival
+    // survival score
     game.score += Math.floor((6 + game.round * 2) * dt * 10);
 
-    // TEMP: advance round manually for now
+    // TEMP: advance round manually until we add the vent/lock mission
     if (down("n")) {
       keys.delete("n");
       game.nextRound();
@@ -721,7 +730,6 @@
   // Render
   // ============================================================
   function render() {
-    // background
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#05070a";
     ctx.fillRect(0, 0, W, H);
@@ -731,10 +739,13 @@
     ctx.lineWidth = 1;
     ctx.strokeRect(10, 10, W - 20, H - 20);
 
-    // trench
-    drawTrench();
+    // star haze (subtle, above horizon)
+    drawStarHaze();
 
-    // draw far-to-near ordering: pipes/enemies/shots by z desc
+    // trench
+    drawTrenchDetailed();
+
+    // draw far-to-near ordering (z desc)
     const drawables = [];
     for (const p of game.pipes) drawables.push({ z: p.z, draw: () => p.draw() });
     for (const e of game.enemies) drawables.push({ z: e.z, draw: () => e.draw() });
@@ -755,7 +766,7 @@
         "Move: A/D or Arrow Left/Right",
         "Lasers: SPACE (wing guns)",
         "Missile: M (limited)",
-        "Debug: N = next round",
+        "Debug: N = next round (for now)",
       ]);
     } else if (game.state === "paused") {
       centerOverlay("PAUSED", ["Press ESC to resume"]);
@@ -764,30 +775,55 @@
     }
   }
 
-  function drawTrench() {
+  function drawStarHaze() {
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = "#e6f0ff";
+    ctx.lineWidth = 1;
+
+    // a few faint “stars” with deterministic positions based on round
+    const r = makeRng(7000 + game.round * 13);
+    for (let i = 0; i < 50; i++) {
+      const x = r() * W;
+      const y = r() * cam.horizonY;
+      if (r() < 0.25) {
+        ctx.beginPath();
+        ctx.moveTo(x - 2, y);
+        ctx.lineTo(x + 2, y);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, 1, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawTrenchDetailed() {
     ctx.save();
     ctx.strokeStyle = "#e6f0ff";
     ctx.lineWidth = 2;
 
-    const slices = 28;
-    const zMin = game.shipZ + 80;
+    const slices = TUNE.slices;
+    const zMin = game.shipZ + 100;
     const zMax = game.renderFarZ;
 
-    // draw left/right rails as segmented lines
     let prevL = null;
     let prevR = null;
 
     for (let i = 0; i <= slices; i++) {
       const t = i / slices;
       const z = lerp(zMin, zMax, t);
-      const half = trenchHalfWidthAt(z, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
 
+      const half = trenchHalfWidthAt(z, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
       const Lw = -half;
       const Rw = half;
 
-      const L = cam.projectXZ(Lw, z);
-      const R = cam.projectXZ(Rw, z);
+      const L = cam.projectXZ(Lw - game.ship.x, z);
+      const R = cam.projectXZ(Rw - game.ship.x, z);
 
+      // side rails
       if (prevL && prevR) {
         ctx.beginPath();
         ctx.moveTo(prevL.x, prevL.y);
@@ -799,11 +835,9 @@
         ctx.lineTo(R.x, R.y);
         ctx.stroke();
       }
-      prevL = L;
-      prevR = R;
 
       // floor rungs (motion feel)
-      if (i % 3 === 0) {
+      if (i % TUNE.rungEvery === 0) {
         ctx.globalAlpha = 0.45;
         ctx.beginPath();
         ctx.moveTo(L.x, L.y);
@@ -811,18 +845,92 @@
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
+
+      // wall panels (adds “graphics” without heavy art)
+      if (i % TUNE.wallPanelEvery === 0) {
+        drawWallPanelAt(z, half, i);
+      }
+
+      // occasional light strip
+      if (i % TUNE.lightEvery === 0) {
+        drawWallLightAt(z, half);
+      }
+
+      prevL = L;
+      prevR = R;
     }
 
-    // center guideline (subtle) helps “forward” feel
-    ctx.globalAlpha = 0.28;
+    // center guideline for speed feel
+    ctx.globalAlpha = 0.22;
     ctx.beginPath();
-    const c0 = cam.projectXZ(0, zMin);
-    const c1 = cam.projectXZ(0, zMax);
+    const c0 = cam.projectXZ(0 - game.ship.x, zMin);
+    const c1 = cam.projectXZ(0 - game.ship.x, zMax);
     ctx.moveTo(c0.x, c0.y);
     ctx.lineTo(c1.x, c1.y);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
+    ctx.restore();
+  }
+
+  function drawWallPanelAt(z, half, idx) {
+    // deterministic panel pattern per slice
+    const r = makeRng(100000 + game.round * 97 + idx * 31);
+
+    // choose left or right
+    const side = r() < 0.5 ? -1 : 1;
+
+    // panel is inset slightly from wall
+    const wallX = side * half;
+    const inset = 22 + r() * 16;
+    const panelX = wallX - side * inset;
+
+    // panel height effect (in screen, based on projection scale)
+    const p = cam.projectXZ(panelX - game.ship.x, z);
+    const s = p.s;
+
+    const w = (14 + r() * 18) * s;
+    const h = (10 + r() * 22) * s;
+
+    // place it slightly above the floor line
+    const y = p.y - (16 + r() * 18) * s;
+    const x = p.x + (side * (6 + r() * 8) * s);
+
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = "#e6f0ff";
+    ctx.lineWidth = 1;
+
+    ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+
+    // tiny “greeble” inside sometimes
+    if (r() < TUNE.greebleChance) {
+      ctx.globalAlpha = 0.22;
+      ctx.strokeRect(x - w / 4, y - h / 4, w / 2, h / 2);
+    }
+
+    ctx.restore();
+  }
+
+  function drawWallLightAt(z, half) {
+    const r = makeRng(80000 + Math.floor(z));
+    const side = r() < 0.5 ? -1 : 1;
+    const wallX = side * half;
+
+    const p = cam.projectXZ(wallX - game.ship.x, z);
+    const s = p.s;
+
+    const len = (26 + r() * 34) * s;
+    const x = p.x + side * (10 * s);
+    const y = p.y - 28 * s;
+
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = Math.max(1, 2 * s);
+    ctx.beginPath();
+    ctx.moveTo(x - len / 2, y);
+    ctx.lineTo(x + len / 2, y);
+    ctx.stroke();
     ctx.restore();
   }
 
