@@ -46,54 +46,71 @@
   }
 
   // ============================================================
-  // Tuning knobs (easy to adjust later)
+  // Tunables (you can tweak later)
   // ============================================================
   const TUNE = {
-    // Trench look/feel
-    slices: 36,              // more slices = smoother perspective
-    rungEvery: 3,            // floor “rungs” frequency
-    wallPanelEvery: 4,       // wall panel frequency
-    lightEvery: 7,           // occasional “light strip”
-    greebleChance: 0.55,     // chance a segment gets a greeble rectangle
+    // movement
+    xSpeed: 7.1,
+    ySpeed: 3.6,          // smaller than xSpeed (you asked “just a bit”)
+    yClamp: 0.55,         // -0.55..+0.55 small vertical range
 
-    // Difficulty / chaos
-    enemySpawnMin: 1.25,     // bigger = fewer enemies
-    enemySpawnMax: 2.20,
+    // camera feel
+    horizonBase: 120,
+    yCameraShift: 26,     // how much up/down nudges projection
+    cockpitBob: 0.9,      // subtle shake
+    speedLines: 26,       // count of speed lines
+
+    // trench motion
+    slices: 40,
+    segmentLen: 170,      // how fast the “rungs/panels” cycle forward
+    rungEvery: 3,
+    wallPanelEvery: 4,
+    lightEvery: 7,
+    greebleChance: 0.62,
+
+    // difficulty (calm)
+    enemyEnabled: true,
+    enemySpawnMin: 1.4,
+    enemySpawnMax: 2.4,
     enemyShotsEnabled: true,
-    enemyShotRateScale: 0.35, // lower = fewer enemy shots (0.35 = calm)
+    enemyShotRateScale: 0.25, // lower = fewer shots
     pipesEnabled: true,
-    pipeChance: 0.40,        // chance to spawn a wall pipe when timer hits
+    pipeChance: 0.32,
   };
 
   // ============================================================
-  // Projection / camera (FIXED so near is bottom, far is horizon)
-  // World space: x (left/right), z (forward distance ahead of ship)
+  // Projection / camera
+  // World: x left/right, z forward distance ahead.
+  // We keep a tiny "yAim" that shifts projection to simulate up/down.
   // ============================================================
   const cam = {
-    horizonY: 120,
+    horizonY: TUNE.horizonBase,
     fov: 520,
+    yOffset: 0,
     projectXZ(x, z) {
       const zz = Math.max(40, z);
-      const s = this.fov / (zz + this.fov); // near -> bigger s, far -> smaller s
+      const s = this.fov / (zz + this.fov); // near bigger, far smaller
       const sx = W * 0.5 + x * s;
 
-      // ✅ FIX: near points should be near the bottom (bigger s => bigger y)
-      const sy = this.horizonY + s * (H - this.horizonY);
+      // near -> bottom, far -> horizon
+      let sy = this.horizonY + s * (H - this.horizonY);
+
+      // simulate slight up/down camera movement:
+      // (1 - s) makes far geometry shift more than near (pitch feel)
+      sy += this.yOffset * (1 - s);
 
       return { x: sx, y: sy, s };
     },
   };
 
-  // ============================================================
-  // Trench width model (narrower in the distance)
-  // ============================================================
+  // trench width (narrower far away)
   function trenchHalfWidthAt(z, nearHalf, farHalf, farZ) {
     const t = clamp((z - game.shipZ) / (farZ - game.shipZ), 0, 1);
     return lerp(nearHalf, farHalf, t);
   }
 
   // ============================================================
-  // Entities
+  // Entities (kept simple for now; we’ll polish later)
   // ============================================================
   class PlayerShot {
     constructor(x, z, kind) {
@@ -132,19 +149,10 @@
         ctx.stroke();
       }
 
-      // muzzle tracer for “wing guns” feel
-      if (this.age < 0.12 && this.kind === "laser") {
+      // muzzle tracer (makes it feel like it’s firing from wing guns)
+      if (this.age < 0.11 && this.kind === "laser") {
         const muzz = getWingMuzzlesScreen();
         const m = this.x < game.ship.x ? muzz.left : muzz.right;
-        ctx.globalAlpha = 0.6;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(m.x, m.y);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      } else if (this.age < 0.14 && this.kind === "missile") {
-        const m = getCenterMuzzleScreen();
         ctx.globalAlpha = 0.6;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -187,27 +195,25 @@
     constructor(x, z, rng) {
       this.x = x;
       this.z = z;
-      this.vx = (rng() * 2 - 1) * 0.45;
+      this.vx = (rng() * 2 - 1) * 0.42;
       this.hp = 2;
-      this.fireCd = 0.9 + rng() * 1.2;
+      this.fireCd = 1.2 + rng() * 1.4;
       this.alive = true;
     }
     update(dt) {
-      // gentle drift and light steering toward player
-      const steer = clamp((game.ship.x - this.x) * 0.12, -0.25, 0.25);
-      this.vx = clamp(this.vx + steer * dt, -0.9, 0.9);
+      const steer = clamp((game.ship.x - this.x) * 0.10, -0.22, 0.22);
+      this.vx = clamp(this.vx + steer * dt, -0.8, 0.8);
       this.x += this.vx * dt * 60;
 
       this.z -= game.scrollSpeed * dt;
 
-      // calmer enemy fire
+      // calm enemy fire
       if (TUNE.enemyShotsEnabled) {
         this.fireCd -= dt;
-        const fireScale = clamp(1.0 - game.round * 0.05, 0.55, 1.0) / Math.max(0.15, TUNE.enemyShotRateScale);
-        // fireScale > 1 means slower effective firing (since we multiply cooldown)
-        if (this.fireCd <= 0 && this.z < game.shipZ + 980 && this.z > game.shipZ + 240) {
-          this.fireCd = (1.35 + Math.random() * 1.0) * fireScale;
-          if (Math.random() < 0.45) game.enemyShots.push(new EnemyShot(this.x, this.z));
+        const scale = clamp(1.0 - game.round * 0.05, 0.55, 1.0) / Math.max(0.15, TUNE.enemyShotRateScale);
+        if (this.fireCd <= 0 && this.z < game.shipZ + 980 && this.z > game.shipZ + 260) {
+          this.fireCd = (1.55 + Math.random() * 1.0) * scale;
+          if (Math.random() < 0.35) game.enemyShots.push(new EnemyShot(this.x, this.z));
         }
       }
 
@@ -223,7 +229,7 @@
       ctx.strokeStyle = "#e6f0ff";
       ctx.lineWidth = Math.max(1, 2.2 * s);
 
-      // original “interceptor” silhouette (not TIE-like)
+      // wedge + fins silhouette
       ctx.beginPath();
       ctx.moveTo(0, -size * 0.72);
       ctx.lineTo(-size * 0.26, size * 0.12);
@@ -260,7 +266,7 @@
 
   class TrenchPipe {
     constructor(side, z, protrude, thickness) {
-      this.side = side; // -1 left, +1 right
+      this.side = side;
       this.z = z;
       this.protrude = protrude;
       this.thickness = thickness;
@@ -306,42 +312,48 @@
   }
 
   // ============================================================
-  // Cockpit UI (better looking cockpit, not weird geometry)
+  // Cockpit (better wings + barrels)
   // ============================================================
   function getWingMuzzlesScreen() {
     return {
-      left: { x: W * 0.28, y: H - 84 },
-      right: { x: W * 0.72, y: H - 84 },
+      left: { x: W * 0.26, y: H - 86 },
+      right: { x: W * 0.74, y: H - 86 },
     };
   }
   function getCenterMuzzleScreen() {
     return { x: W * 0.5, y: H - 92 };
   }
 
-  function drawCockpit() {
+  function drawCockpit(t) {
+    // subtle bob/shake
+    const bob = Math.sin(t * 6.0) * TUNE.cockpitBob;
+    const bob2 = Math.sin(t * 9.0) * (TUNE.cockpitBob * 0.55);
+
     ctx.save();
+    ctx.translate(bob, bob2);
+
     ctx.strokeStyle = "rgba(230,240,255,0.90)";
     ctx.lineWidth = 2;
 
-    // window frame (top arch + sides)
+    // window frame
     ctx.globalAlpha = 0.55;
     ctx.beginPath();
-    ctx.moveTo(W * 0.18, H - 150);
-    ctx.lineTo(W * 0.18, H - 18);
-    ctx.lineTo(W * 0.82, H - 18);
-    ctx.lineTo(W * 0.82, H - 150);
+    ctx.moveTo(W * 0.16, H - 160);
+    ctx.lineTo(W * 0.16, H - 18);
+    ctx.lineTo(W * 0.84, H - 18);
+    ctx.lineTo(W * 0.84, H - 160);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     // angled supports
     ctx.beginPath();
-    ctx.moveTo(W * 0.22, H - 18);
-    ctx.lineTo(W * 0.34, H - 160);
+    ctx.moveTo(W * 0.20, H - 18);
+    ctx.lineTo(W * 0.33, H - 170);
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.moveTo(W * 0.78, H - 18);
-    ctx.lineTo(W * 0.66, H - 160);
+    ctx.moveTo(W * 0.80, H - 18);
+    ctx.lineTo(W * 0.67, H - 170);
     ctx.stroke();
 
     // dashboard base
@@ -352,17 +364,34 @@
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // gun pods
+    // --- wings (screen-space silhouettes) ---
+    // Left wing edge
+    ctx.globalAlpha = 0.75;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.06, H - 20);
+    ctx.lineTo(W * 0.24, H - 86);
+    ctx.lineTo(W * 0.40, H - 86);
+    ctx.stroke();
+
+    // Right wing edge
+    ctx.beginPath();
+    ctx.moveTo(W * 0.94, H - 20);
+    ctx.lineTo(W * 0.76, H - 86);
+    ctx.lineTo(W * 0.60, H - 86);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // gun barrels at wing tips
     const muzz = getWingMuzzlesScreen();
-    drawGunPod(muzz.left.x, muzz.left.y);
-    drawGunPod(muzz.right.x, muzz.right.y);
+    drawBarrel(muzz.left.x, muzz.left.y);
+    drawBarrel(muzz.right.x, muzz.right.y);
 
     // center console
     ctx.globalAlpha = 0.55;
     ctx.strokeRect(W * 0.5 - 86, H - 132, 172, 104);
     ctx.globalAlpha = 1;
 
-    // tiny “instrument” ticks
+    // tiny instrument ticks
     ctx.globalAlpha = 0.45;
     for (let i = 0; i < 9; i++) {
       const x = W * 0.5 - 70 + i * 17;
@@ -376,25 +405,34 @@
     ctx.restore();
   }
 
-  function drawGunPod(x, y) {
+  function drawBarrel(x, y) {
     ctx.save();
     ctx.translate(x, y);
     ctx.strokeStyle = "rgba(230,240,255,0.95)";
     ctx.lineWidth = 2;
 
+    // small mount
     ctx.beginPath();
-    ctx.moveTo(-34, 0);
-    ctx.lineTo(-14, -20);
-    ctx.lineTo(32, -20);
-    ctx.lineTo(44, 0);
+    ctx.moveTo(-18, 0);
+    ctx.lineTo(-6, -14);
+    ctx.lineTo(18, -14);
+    ctx.lineTo(26, 0);
     ctx.closePath();
     ctx.stroke();
 
     // barrel
     ctx.beginPath();
-    ctx.moveTo(16, -20);
-    ctx.lineTo(16, -38);
+    ctx.moveTo(10, -14);
+    ctx.lineTo(10, -34);
     ctx.stroke();
+
+    // little side fin
+    ctx.globalAlpha = 0.65;
+    ctx.beginPath();
+    ctx.moveTo(-2, -10);
+    ctx.lineTo(-16, -2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
 
     ctx.restore();
   }
@@ -404,8 +442,9 @@
     ctx.strokeStyle = "rgba(230,240,255,0.85)";
     ctx.lineWidth = 2;
 
+    // reticle shifts a bit with vertical movement so it “feels” like you moved
     const cx = W * 0.5;
-    const cy = H * 0.44;
+    const cy = H * 0.44 + game.ship.y * 18;
 
     ctx.beginPath();
     ctx.moveTo(cx - 18, cy);
@@ -448,7 +487,6 @@
     ctx.fillText(`COMBO x${game.combo}`, W * 0.5 - 56, 56);
     ctx.globalAlpha = 1;
 
-    // lock placeholder
     ctx.globalAlpha = 0.65;
     ctx.strokeRect(W * 0.5 - 34, 70, 68, 22);
     ctx.globalAlpha = 1;
@@ -484,12 +522,178 @@
   }
 
   // ============================================================
+  // Speed lines (helps “I am moving forward”)
+  // ============================================================
+  function drawSpeedLines(t) {
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = "#e6f0ff";
+    ctx.lineWidth = 1;
+
+    const r = makeRng(4242);
+    for (let i = 0; i < TUNE.speedLines; i++) {
+      const x = r() * W;
+      const y = r() * (cam.horizonY + 40);
+      const len = 18 + r() * 26;
+      // animate downward from horizon, repeating
+      const phase = (t * game.scrollSpeed * 0.18 + i * 23) % 220;
+      const yy = y + phase;
+
+      ctx.beginPath();
+      ctx.moveTo(x, yy);
+      ctx.lineTo(x, yy + len);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // Trench drawing with TRUE motion (phase offset)
+  // ============================================================
+  function drawTrenchDetailed(t) {
+    ctx.save();
+    ctx.strokeStyle = "#e6f0ff";
+    ctx.lineWidth = 2;
+
+    const slices = TUNE.slices;
+    const baseMin = game.shipZ + 100;
+    const baseMax = game.renderFarZ;
+
+    // This phase is the “secret sauce”: the trench texture flows toward you.
+    const range = baseMax - baseMin;
+    const phase = (t * game.scrollSpeed) % TUNE.segmentLen;
+
+    let prevL = null;
+    let prevR = null;
+
+    for (let i = 0; i <= slices; i++) {
+      const u = i / slices;
+
+      // move features toward player by subtracting phase
+      let z = baseMin + u * range - phase;
+
+      // wrap so z stays in [baseMin, baseMax]
+      while (z < baseMin) z += range;
+
+      const half = trenchHalfWidthAt(z, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
+      const Lw = -half;
+      const Rw = half;
+
+      const L = cam.projectXZ(Lw - game.ship.x, z);
+      const R = cam.projectXZ(Rw - game.ship.x, z);
+
+      if (prevL && prevR) {
+        // rails
+        ctx.beginPath();
+        ctx.moveTo(prevL.x, prevL.y);
+        ctx.lineTo(L.x, L.y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(prevR.x, prevR.y);
+        ctx.lineTo(R.x, R.y);
+        ctx.stroke();
+      }
+
+      // floor rungs
+      if (i % TUNE.rungEvery === 0) {
+        ctx.globalAlpha = 0.45;
+        ctx.beginPath();
+        ctx.moveTo(L.x, L.y);
+        ctx.lineTo(R.x, R.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // wall panels + greebles
+      if (i % TUNE.wallPanelEvery === 0) {
+        drawWallPanelAt(z, half, i);
+      }
+
+      // occasional light strip
+      if (i % TUNE.lightEvery === 0) {
+        drawWallLightAt(z, half);
+      }
+
+      prevL = L;
+      prevR = R;
+    }
+
+    // center guideline
+    ctx.globalAlpha = 0.22;
+    const z0 = baseMin + 20;
+    const z1 = baseMax - 20;
+    const c0 = cam.projectXZ(0 - game.ship.x, z0);
+    const c1 = cam.projectXZ(0 - game.ship.x, z1);
+    ctx.beginPath();
+    ctx.moveTo(c0.x, c0.y);
+    ctx.lineTo(c1.x, c1.y);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+  }
+
+  function drawWallPanelAt(z, half, idx) {
+    const r = makeRng(100000 + game.round * 97 + idx * 31 + Math.floor(z));
+    const side = r() < 0.5 ? -1 : 1;
+
+    const wallX = side * half;
+    const inset = 22 + r() * 16;
+    const panelX = wallX - side * inset;
+
+    const p = cam.projectXZ(panelX - game.ship.x, z);
+    const s = p.s;
+
+    const w = (14 + r() * 18) * s;
+    const h = (10 + r() * 22) * s;
+
+    const y = p.y - (16 + r() * 18) * s;
+    const x = p.x + side * (6 + r() * 8) * s;
+
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x - w / 2, y - h / 2, w, h);
+
+    if (r() < TUNE.greebleChance) {
+      ctx.globalAlpha = 0.22;
+      ctx.strokeRect(x - w / 4, y - h / 4, w / 2, h / 2);
+    }
+
+    ctx.restore();
+  }
+
+  function drawWallLightAt(z, half) {
+    const r = makeRng(80000 + Math.floor(z));
+    const side = r() < 0.5 ? -1 : 1;
+    const wallX = side * half;
+
+    const p = cam.projectXZ(wallX - game.ship.x, z);
+    const s = p.s;
+
+    const len = (26 + r() * 34) * s;
+    const x = p.x + side * (10 * s);
+    const y = p.y - 28 * s;
+
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = Math.max(1, 2 * s);
+    ctx.beginPath();
+    ctx.moveTo(x - len / 2, y);
+    ctx.lineTo(x + len / 2, y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ============================================================
   // Game state
   // ============================================================
   const game = {
     state: "title", // title | playing | paused | gameover
-
     rng: makeRng(1337),
+
+    t: 0,
 
     round: 1,
     score: 0,
@@ -503,7 +707,7 @@
     shipZ: 140,
     renderFarZ: 2600,
 
-    ship: { x: 0 },
+    ship: { x: 0, y: 0 }, // y is small “vertical position/aim”
     shipHitR: 36,
 
     scrollSpeed: 560,
@@ -541,6 +745,8 @@
 
     resetRound() {
       this.ship.x = 0;
+      this.ship.y = 0;
+
       this.rng = makeRng(9000 + this.round * 101);
 
       this.enemies = [];
@@ -548,13 +754,12 @@
       this.playerShots = [];
       this.enemyShots = [];
 
-      this.enemyTimer = 0.6;
-      this.pipeTimer = 1.4;
+      this.enemyTimer = 0.8;
+      this.pipeTimer = 1.6;
 
       this.fireCd = 0;
       this.missileCd = 0;
 
-      // seed a couple enemies, not too many
       const seedCount = 1 + Math.min(2, Math.floor(this.round / 2));
       for (let i = 0; i < seedCount; i++) this.spawnEnemy(true);
     },
@@ -575,6 +780,7 @@
     },
 
     spawnEnemy(prefill = false) {
+      if (!TUNE.enemyEnabled) return;
       const half = this.trenchNearHalf;
       const margin = 80;
       const x = (this.rng() * 2 - 1) * (half - margin);
@@ -600,17 +806,6 @@
       this.playerShots.push(new PlayerShot(this.ship.x - gunOffset, z0, "laser"));
       this.playerShots.push(new PlayerShot(this.ship.x + gunOffset, z0, "laser"));
     },
-
-    fireMissile() {
-      if (this.missileCd > 0) return;
-      if (this.missiles <= 0) return;
-
-      this.missiles -= 1;
-      this.missileCd = 0.75;
-
-      const z0 = this.shipZ + 80;
-      this.playerShots.push(new PlayerShot(this.ship.x, z0, "missile"));
-    },
   };
 
   // ============================================================
@@ -619,32 +814,37 @@
   function update(dt) {
     if (game.state !== "playing") return;
 
+    game.t += dt;
+
     game.fireCd = Math.max(0, game.fireCd - dt);
     game.missileCd = Math.max(0, game.missileCd - dt);
 
-    // movement (left/right in trench)
+    // Movement (left/right + slight up/down)
     const left = down("a") || down("arrowleft");
     const right = down("d") || down("arrowright");
+    const up = down("w") || down("arrowup");
+    const downKey = down("s") || down("arrowdown");
+
     const vx = (right ? 1 : 0) - (left ? 1 : 0);
+    const vy = (downKey ? 1 : 0) - (up ? 1 : 0);
 
-    game.ship.x += vx * 7.2 * dt * 60;
+    game.ship.x += vx * TUNE.xSpeed * dt * 60;
+    game.ship.y += vy * TUNE.ySpeed * dt * 60;
 
-    // constrain to trench at ship depth
+    game.ship.y = clamp(game.ship.y, -TUNE.yClamp, TUNE.yClamp);
+
+    // constrain x within trench
     const half = trenchHalfWidthAt(game.shipZ, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
     game.ship.x = clamp(game.ship.x, -half + 70, half - 70);
 
-    // firing
+    // Firing
     if (down(" ")) game.fireLaser();
-    if (down("m")) {
-      keys.delete("m");
-      game.fireMissile();
-    }
 
-    // enemy spawning (calmer)
+    // Spawn enemies (calm)
     const enemyEvery = clamp(
       (TUNE.enemySpawnMin + (TUNE.enemySpawnMax - TUNE.enemySpawnMin) * game.rng()) - game.round * 0.03,
-      0.65,
-      2.6
+      0.75,
+      2.8
     );
     game.enemyTimer -= dt;
     if (game.enemyTimer <= 0) {
@@ -652,15 +852,15 @@
       game.spawnEnemy(false);
     }
 
-    // occasional pipes
+    // Pipes (rare)
     game.pipeTimer -= dt;
-    const pipeEvery = clamp(2.4 - game.round * 0.06, 1.2, 2.4);
+    const pipeEvery = clamp(2.6 - game.round * 0.06, 1.3, 2.6);
     if (game.pipeTimer <= 0) {
       game.pipeTimer += pipeEvery;
       if (Math.random() < TUNE.pipeChance) game.spawnPipe();
     }
 
-    // update entities
+    // Update entities
     for (const e of game.enemies) e.update(dt);
     for (const p of game.pipes) p.update(dt);
     for (const s of game.playerShots) s.update(dt);
@@ -671,7 +871,7 @@
     game.playerShots = game.playerShots.filter((s) => s.alive);
     game.enemyShots = game.enemyShots.filter((s) => s.alive);
 
-    // collisions: pipes vs ship
+    // Collisions: pipes vs ship
     for (const p of game.pipes) {
       if (p.collidesWithShip()) {
         game.loseLife();
@@ -679,7 +879,7 @@
       }
     }
 
-    // collisions: enemy shots vs ship
+    // Collisions: enemy shots vs ship
     for (const es of game.enemyShots) {
       if (Math.abs(es.z - game.shipZ) < 70) {
         if (Math.abs(es.x - game.ship.x) < game.shipHitR) {
@@ -689,34 +889,7 @@
       }
     }
 
-    // collisions: enemies ramming
-    for (const e of game.enemies) {
-      if (Math.abs(e.z - game.shipZ) < 80) {
-        if (Math.abs(e.x - game.ship.x) < game.shipHitR + 20) {
-          game.loseLife();
-          return;
-        }
-      }
-    }
-
-    // player shots vs enemies
-    for (const ps of game.playerShots) {
-      for (const e of game.enemies) {
-        if (!ps.alive || !e.alive) continue;
-        if (Math.abs(ps.z - e.z) < ps.radius + 42) {
-          if (Math.abs(ps.x - e.x) < ps.radius + 40) {
-            ps.alive = false;
-            e.hit(ps.kind === "missile" ? 2 : 1);
-
-            game.combo = Math.min(25, game.combo + 1);
-            const base = ps.kind === "missile" ? 160 : 90;
-            game.score += Math.floor(base * (1 + game.combo * 0.08));
-          }
-        }
-      }
-    }
-
-    // survival score
+    // Survival score
     game.score += Math.floor((6 + game.round * 2) * dt * 10);
 
     // TEMP: advance round manually until we add the vent/lock mission
@@ -730,6 +903,10 @@
   // Render
   // ============================================================
   function render() {
+    // Update camera offsets based on ship vertical movement
+    cam.horizonY = TUNE.horizonBase;
+    cam.yOffset = -game.ship.y * TUNE.yCameraShift;
+
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = "#05070a";
     ctx.fillRect(0, 0, W, H);
@@ -739,13 +916,11 @@
     ctx.lineWidth = 1;
     ctx.strokeRect(10, 10, W - 20, H - 20);
 
-    // star haze (subtle, above horizon)
-    drawStarHaze();
+    // speed lines + trench (now animated)
+    drawSpeedLines(game.t);
+    drawTrenchDetailed(game.t);
 
-    // trench
-    drawTrenchDetailed();
-
-    // draw far-to-near ordering (z desc)
+    // draw entities far-to-near
     const drawables = [];
     for (const p of game.pipes) drawables.push({ z: p.z, draw: () => p.draw() });
     for (const e of game.enemies) drawables.push({ z: e.z, draw: () => e.draw() });
@@ -755,17 +930,16 @@
     drawables.sort((a, b) => b.z - a.z);
     for (const d of drawables) d.draw();
 
-    // cockpit + reticle + HUD
-    drawCockpit();
+    // cockpit + reticle + hud
+    drawCockpit(game.t);
     drawReticle();
     drawHUD();
 
     if (game.state === "title") {
       centerOverlay("TRENCH RUN", [
         "Press ENTER to start",
-        "Move: A/D or Arrow Left/Right",
+        "Move: WASD / Arrow Keys (up/down is small)",
         "Lasers: SPACE (wing guns)",
-        "Missile: M (limited)",
         "Debug: N = next round (for now)",
       ]);
     } else if (game.state === "paused") {
@@ -775,165 +949,6 @@
     }
   }
 
-  function drawStarHaze() {
-    ctx.save();
-    ctx.globalAlpha = 0.25;
-    ctx.strokeStyle = "#e6f0ff";
-    ctx.lineWidth = 1;
-
-    // a few faint “stars” with deterministic positions based on round
-    const r = makeRng(7000 + game.round * 13);
-    for (let i = 0; i < 50; i++) {
-      const x = r() * W;
-      const y = r() * cam.horizonY;
-      if (r() < 0.25) {
-        ctx.beginPath();
-        ctx.moveTo(x - 2, y);
-        ctx.lineTo(x + 2, y);
-        ctx.stroke();
-      } else {
-        ctx.beginPath();
-        ctx.arc(x, y, 1, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
-
-  function drawTrenchDetailed() {
-    ctx.save();
-    ctx.strokeStyle = "#e6f0ff";
-    ctx.lineWidth = 2;
-
-    const slices = TUNE.slices;
-    const zMin = game.shipZ + 100;
-    const zMax = game.renderFarZ;
-
-    let prevL = null;
-    let prevR = null;
-
-    for (let i = 0; i <= slices; i++) {
-      const t = i / slices;
-      const z = lerp(zMin, zMax, t);
-
-      const half = trenchHalfWidthAt(z, game.trenchNearHalf, game.trenchFarHalf, game.renderFarZ);
-      const Lw = -half;
-      const Rw = half;
-
-      const L = cam.projectXZ(Lw - game.ship.x, z);
-      const R = cam.projectXZ(Rw - game.ship.x, z);
-
-      // side rails
-      if (prevL && prevR) {
-        ctx.beginPath();
-        ctx.moveTo(prevL.x, prevL.y);
-        ctx.lineTo(L.x, L.y);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.moveTo(prevR.x, prevR.y);
-        ctx.lineTo(R.x, R.y);
-        ctx.stroke();
-      }
-
-      // floor rungs (motion feel)
-      if (i % TUNE.rungEvery === 0) {
-        ctx.globalAlpha = 0.45;
-        ctx.beginPath();
-        ctx.moveTo(L.x, L.y);
-        ctx.lineTo(R.x, R.y);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-
-      // wall panels (adds “graphics” without heavy art)
-      if (i % TUNE.wallPanelEvery === 0) {
-        drawWallPanelAt(z, half, i);
-      }
-
-      // occasional light strip
-      if (i % TUNE.lightEvery === 0) {
-        drawWallLightAt(z, half);
-      }
-
-      prevL = L;
-      prevR = R;
-    }
-
-    // center guideline for speed feel
-    ctx.globalAlpha = 0.22;
-    ctx.beginPath();
-    const c0 = cam.projectXZ(0 - game.ship.x, zMin);
-    const c1 = cam.projectXZ(0 - game.ship.x, zMax);
-    ctx.moveTo(c0.x, c0.y);
-    ctx.lineTo(c1.x, c1.y);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    ctx.restore();
-  }
-
-  function drawWallPanelAt(z, half, idx) {
-    // deterministic panel pattern per slice
-    const r = makeRng(100000 + game.round * 97 + idx * 31);
-
-    // choose left or right
-    const side = r() < 0.5 ? -1 : 1;
-
-    // panel is inset slightly from wall
-    const wallX = side * half;
-    const inset = 22 + r() * 16;
-    const panelX = wallX - side * inset;
-
-    // panel height effect (in screen, based on projection scale)
-    const p = cam.projectXZ(panelX - game.ship.x, z);
-    const s = p.s;
-
-    const w = (14 + r() * 18) * s;
-    const h = (10 + r() * 22) * s;
-
-    // place it slightly above the floor line
-    const y = p.y - (16 + r() * 18) * s;
-    const x = p.x + (side * (6 + r() * 8) * s);
-
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    ctx.strokeStyle = "#e6f0ff";
-    ctx.lineWidth = 1;
-
-    ctx.strokeRect(x - w / 2, y - h / 2, w, h);
-
-    // tiny “greeble” inside sometimes
-    if (r() < TUNE.greebleChance) {
-      ctx.globalAlpha = 0.22;
-      ctx.strokeRect(x - w / 4, y - h / 4, w / 2, h / 2);
-    }
-
-    ctx.restore();
-  }
-
-  function drawWallLightAt(z, half) {
-    const r = makeRng(80000 + Math.floor(z));
-    const side = r() < 0.5 ? -1 : 1;
-    const wallX = side * half;
-
-    const p = cam.projectXZ(wallX - game.ship.x, z);
-    const s = p.s;
-
-    const len = (26 + r() * 34) * s;
-    const x = p.x + side * (10 * s);
-    const y = p.y - 28 * s;
-
-    ctx.save();
-    ctx.globalAlpha = 0.22;
-    ctx.lineWidth = Math.max(1, 2 * s);
-    ctx.beginPath();
-    ctx.moveTo(x - len / 2, y);
-    ctx.lineTo(x + len / 2, y);
-    ctx.stroke();
-    ctx.restore();
-  }
-
   // ============================================================
   // Loop
   // ============================================================
@@ -941,10 +956,8 @@
   function loop(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
-
     update(dt);
     render();
-
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
